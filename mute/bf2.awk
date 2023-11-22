@@ -1,41 +1,42 @@
 #!/usr/bin/mawk -f
 # 2023-11-21 mute <scott@nicholas.one>
 BEGIN {
-  RS=""
-  t[ti++]=0
-  if (opts == "") opts="CR"
+  RS = ""
+  if (opts == "") opts = "CR"
 }
 
-function compile(   ii, ci, z, nz) {
+function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
+                 pat)
+{
   if (debug) {
     printf("Running optimizations (%s)...", opts)
     fflush()
   }
   # strip comments
-  gsub(/[^][<>,.+-]/, "")
+  gsub(/[^][<>,.+-]/, "", bfstr)
 
 
-  ii = length($0)
-  ci = 0
-  for (i = 1; i <= ii; i++) {
-    z = substr($0, i, 1)
-    zc = 1
+  bflen = length(bfstr)
+  codeidx = 0
+  for (i = 1; i <= bflen; i++) {
+    op = substr(bfstr, i, 1)
+    oparg = 1
 
     # Clear operator
-    if (opts ~ /[Cc]/ && z == "[") {
-      pat = substr($0, i, 3)
+    if (opts ~ /[Cc]/ && op == "[") {
+      pat = substr(bfstr, i, 3)
       if (pat == "[-]" || pat == "[+]") {
-        code[ci++] = "C"
-        code[ci++] = 0
+        code[codeidx++] = "C"
+        code[codeidx++] = 0
         i += 2
         continue
       }
     }
     # RLE, run length encoding, or contraction
     if (opts ~ /[Rr]/) {
-      while (z ~ /[<>+-]/ && i < ii) {
-        nz = substr($0, ++i, 1)
-        if (nz == z) zc++
+      while (op ~ /[<>+-]/ && i <= bflen) {
+        nextop = substr(bfstr, ++i, 1)
+        if (nextop == op) oparg++
         else {
           i--
           break
@@ -43,54 +44,63 @@ function compile(   ii, ci, z, nz) {
       }
     }
 
-    code[ci++] = z
-    code[ci++] = zc
+    code[codeidx++] = op
+    code[codeidx++] = oparg
   }
   if (debug) {
-    printf("done.\nbrainfuck string=%d, intermediate code ops=%d %d%%\n%04d", length($0), ci / 2, 100*ci / (2 * length($0)), 0)
-    for (i = 0; i < ci; i += 2) {
-      printf (" %s%02d%s", code[i], code[i + 1], (2 + i) % 32 ? "" : ("\n" sprintf("%04d", i)))
+    printf("done.\nbrainfuck string=%d, intermediate code ops=%d %d%%\n%04d",
+           bflen, codeidx / 2, 100 * codeidx / (2 * bflen), 0)
+    for (i = 0; i < codeidx; i += 2) {
+      printf(" %s%02d%s", code[i], code[i + 1],
+             (2 + i) % 32 ? "" : ("\n" sprintf("%04d", i)))
     }
     printf("\n")
   }
+  return codeidx
 }
 
-function run() {
-  ii = length(code)
-  s[0] = 0
-  j = 1
-  for (i = 0; i < ii; i += 2) {
-    z  = code[i]
-    zc = code[i+1]
+function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
+{
+  split("", stack)
+  stackidx = 1
+  tape[tapeidx++] = 0
 
-    if (t[ti] < 0 && z !~ /[][]/) continue
+  for (i = 0; i < codelen; i += 2) {
+    op    = code[i]
+    oparg = code[i + 1]
 
-    if (z == ".") {
-      printf("%c", s[j])
+    if (tape[tapeidx] < 0 && op !~ /[][]/) continue
+
+    if (op == ".") {
+      printf("%c", stack[stackidx])
       fflush()
-    } else if (z == "+") {
-      s[j] += zc
-      while (s[j] > 255) s[j] -= 256
-    } else if (z == "-") {
-      s[j] -= zc
-      while (s[j] < 0) s[j] += 256
-    } else if (z == "]") {
-      if (s[j] > 0) i = t[ti] - 2
-      delete t[ti--]
-    } else if (z == "[") {
-      t[++ti] = s[j] ? i : -1
-    } else if (z == ">") {
-      j += zc
-    } else if (z == "<") {
-      j -= zc
-    } else if (z == "C") {
-      s[j] = 0
+    } else if (op == "+") {
+      stack[stackidx] += oparg
+      while (stack[stackidx] > 255) stack[stackidx] -= 256
+    } else if (op == "-") {
+      stack[stackidx] -= oparg
+      while (stack[stackidx] < 0) stack[stackidx] += 256
+    } else if (op == "]") {
+      if (stack[stackidx] > 0) i = tape[tapeidx] - 2
+      delete tape[tapeidx--]
+    } else if (op == "[") {
+      tape[++tapeidx] = stack[stackidx] ? i : -1
+      for (ti = 0; ti <= tapeidx; ti++)
+    } else if (op == ">") {
+      stackidx += oparg
+    } else if (op == "<") {
+      stackidx -= oparg
+    } else if (op == "C") {
+      stack[stackidx] = 0
     }
   }
   printf("\n")
 }
 
+# with RS="" everything should be one line
+# main()
 {
-  compile($0)
-  run()
+  split("", code)
+  codelen = compile($0, code)
+  run(code, codelen)
 }
