@@ -61,37 +61,36 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
 
 function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
 {
-  split("", stack)
-  stackidx = 1
-  tape[tapeidx++] = 0
+  split("", tape)
+  tapeidx = 1
+  stack[stackidx++] = 0
 
   for (i = 0; i < codelen; i += 2) {
     op    = code[i]
     oparg = code[i + 1]
 
-    if (tape[tapeidx] < 0 && op !~ /[][]/) continue
+    if (stack[stackidx] < 0 && op !~ /[][]/) continue
 
     if (op == ".") {
-      printf("%c", stack[stackidx])
+      printf("%c", tape[tapeidx])
       fflush()
     } else if (op == "+") {
-      stack[stackidx] += oparg
-      while (stack[stackidx] > 255) stack[stackidx] -= 256
+      tape[tapeidx] += oparg
+      while (tape[tapeidx] > 255) tape[tapeidx] -= 256
     } else if (op == "-") {
-      stack[stackidx] -= oparg
-      while (stack[stackidx] < 0) stack[stackidx] += 256
+      tape[tapeidx] -= oparg
+      while (tape[tapeidx] < 0) tape[tapeidx] += 256
     } else if (op == "]") {
-      if (stack[stackidx] > 0) i = tape[tapeidx] - 2
-      delete tape[tapeidx--]
+      if (tape[tapeidx] > 0) i = stack[stackidx] - 2
+      delete stack[stackidx--]
     } else if (op == "[") {
-      tape[++tapeidx] = stack[stackidx] ? i : -1
-      for (ti = 0; ti <= tapeidx; ti++)
+      stack[++stackidx] = tape[tapeidx] ? i : -1
     } else if (op == ">") {
-      stackidx += oparg
+      tapeidx += oparg
     } else if (op == "<") {
-      stackidx -= oparg
+      tapeidx -= oparg
     } else if (op == "C") {
-      stack[stackidx] = 0
+      tape[tapeidx] = 0
     }
   }
   printf("\n")
