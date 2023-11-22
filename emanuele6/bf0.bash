@@ -1,5 +1,6 @@
 #!/bin/bash --
 
+set -f
 x=$1 i=0 j=0 t=() s=()
 
 # Written as short as possible to fit in a IRC message to shbot with the
