@@ -2,8 +2,7 @@
 # 2023-11-21 mute <scott@nicholas.one>
 BEGIN {
   RS=""
-  ti=-1
-  t[++ti]=0
+  t[ti++]=0
   if (opts == "") opts="CR"
 }
 
