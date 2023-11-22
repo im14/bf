@@ -1,7 +1,11 @@
 #!/usr/bin/mawk -f
 # 2023-11-21 mute <scott@nicholas.one>
+# tested in gawk, mawk, bawk (brian's true awk), 9awk. mawk is best.
 BEGIN {
-  RS = ""
+  # Plan 9 awk detection. But /dev/stdout probably only in Linux.
+  if ("]" ~ /[^][]/) {
+    stdout = "/dev/stdout"
+  }
   if (opts == "") opts = "CR"
 }
 
@@ -10,11 +14,10 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
 {
   if (debug) {
     printf("Running optimizations (%s)...", opts)
-    fflush()
+    fflush(stdout)
   }
   # strip comments
-  gsub(/[^][<>,.+-]/, "", bfstr)
-
+  gsub(/[^\]\[<>,.+\-]/, "", bfstr)
 
   bflen = length(bfstr)
   codeidx = 0
@@ -69,11 +72,10 @@ function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
     op    = code[i]
     oparg = code[i + 1]
 
-    if (stack[stackidx] < 0 && op !~ /[][]/) continue
-
+    if (stack[stackidx] < 0 && op !~ /[\]\[]/) continue
     if (op == ".") {
       printf("%c", tape[tapeidx])
-      fflush()
+      fflush(stdout)
     } else if (op == "+") {
       tape[tapeidx] += oparg
       while (tape[tapeidx] > 255) tape[tapeidx] -= 256
@@ -96,10 +98,12 @@ function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
   printf("\n")
 }
 
-# with RS="" everything should be one line
-# main()
 {
+  bfstr = bfstr $0
+}
+
+END {
   split("", code)
-  codelen = compile($0, code)
+  codelen = compile(bfstr, code)
   run(code, codelen)
 }
