@@ -6,7 +6,7 @@ BEGIN {
   if ("]" ~ /[^][]/) {
     stdout = "/dev/stdout"
   }
-  if (opts == "") opts = "CR"
+  if (opts == "") opts = "CSR"
 }
 
 function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
@@ -35,6 +35,20 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
         continue
       }
     }
+    # Scan loops
+    if (opts ~ /[Ss]/ && op == "[") {
+      if (match(substr(bfstr, i), /^\[>+]/)) {
+        code[codeidx++] = "S"
+        code[codeidx++] = RLENGTH - 2
+        i += RLENGTH - 1
+        continue
+      } else if (match(substr(bfstr, i), /^\[<+]/)) {
+        code[codeidx++] = "S"
+        code[codeidx++] = -1 * (RLENGTH - 2)
+        i += RLENGTH - 1
+        continue
+      }
+    }
     # RLE, run length encoding, or contraction
     if (opts ~ /[Rr]/) {
       while (op ~ /[<>+-]/ && i <= bflen) {
@@ -58,6 +72,7 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
              (2 + i) % 32 ? "" : ("\n" sprintf("%04d", i)))
     }
     printf("\n")
+    if (debug == 2) exit
   }
   return codeidx
 }
@@ -93,6 +108,8 @@ function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
       tapeidx -= oparg
     } else if (op == "C") {
       tape[tapeidx] = 0
+    } else if (op == "S") {
+      while (tape[tapeidx]) tapeidx += oparg
     }
   }
   printf("\n")
