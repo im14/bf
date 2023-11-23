@@ -9,8 +9,7 @@ BEGIN {
   if (opts == "") opts = "CSR"
 }
 
-function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
-                 pat)
+function compile(bfstr, prog, jump,    bflen, pc, i, op, oparg, stack, si)
 {
   if (debug) {
     printf("Running optimizations (%s)...", opts)
@@ -20,40 +19,29 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
   gsub(/[^\]\[<>,.+\-]/, "", bfstr)
 
   bflen = length(bfstr)
-  codeidx = 0
+  pc = 0
   for (i = 1; i <= bflen; i++) {
     op = substr(bfstr, i, 1)
     oparg = 1
 
     # Clear operator
-    if (opts ~ /[Cc]/ && op == "[") {
-      pat = substr(bfstr, i, 3)
-      if (pat == "[-]" || pat == "[+]") {
-        code[codeidx++] = "C"
-        code[codeidx++] = 0
-        i += 2
-        continue
-      }
+    if (op == "[" && opts ~ /[Cc]/ && match(substr(bfstr, i), /^\[[-+]\]/)) {
+      prog[pc++] = "C"
+      prog[pc++] = 0
+      i += 2
+      continue
     }
     # Scan loops
-    if (opts ~ /[Ss]/ && op == "[") {
-      if (match(substr(bfstr, i), /^\[>+]/)) {
-        code[codeidx++] = "S"
-        code[codeidx++] = RLENGTH - 2
-        i += RLENGTH - 1
-        continue
-      } else if (match(substr(bfstr, i), /^\[<+]/)) {
-        code[codeidx++] = "S"
-        code[codeidx++] = -1 * (RLENGTH - 2)
-        i += RLENGTH - 1
-        continue
-      }
+    if (op == "[" && opts ~ /[Ss]/ && match(substr(bfstr, i), /^\[[<>]+]/)) {
+      prog[pc++] = "S"
+      prog[pc++] = (substr(bfstr, 1 + i, 1) == "<" ? -1 : 1) * (RLENGTH - 2)
+      i += RLENGTH - 1
+      continue
     }
     # RLE, run length encoding, or contraction
     if (opts ~ /[Rr]/) {
       while (op ~ /[<>+-]/ && i <= bflen) {
-        nextop = substr(bfstr, ++i, 1)
-        if (nextop == op) oparg++
+        if (op == substr(bfstr, ++i, 1)) oparg++
         else {
           i--
           break
@@ -61,56 +49,46 @@ function compile(bfstr, code,    bflen, codeidx, codelen, i, nextop, op, oparg,
       }
     }
 
-    code[codeidx++] = op
-    code[codeidx++] = oparg
+    # pre-compute jump table
+    if (op == "[")
+      stack[si++] = pc
+    else if (op == "]")
+      jump[jump[pc] = stack[--si]] = pc
+
+    prog[pc++] = op
+    prog[pc++] = oparg
   }
   if (debug) {
     printf("done.\nbrainfuck string=%d, intermediate code ops=%d %d%%\n%04d",
-           bflen, codeidx / 2, 100 * codeidx / (2 * bflen), 0)
-    for (i = 0; i < codeidx; i += 2) {
-      printf(" %s%02d%s", code[i], code[i + 1],
+           bflen, pc / 2, 100 * pc / (2 * bflen), 0)
+    for (i = 0; i < pc; i += 2) {
+      printf(" %s%02d%s", prog[i], prog[i + 1],
              (2 + i) % 32 ? "" : ("\n" sprintf("%04d", i)))
     }
     printf("\n")
     if (debug == 2) exit
   }
-  return codeidx
+  return pc
 }
 
-function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
+function run(prog, jump, proglen,    op, oparg, pc, tape, cell)
 {
   split("", tape)
-  tapeidx = 1
-  stack[stackidx++] = 0
+  cell = 1
 
-  for (i = 0; i < codelen; i += 2) {
-    op    = code[i]
-    oparg = code[i + 1]
+  for (pc = 0; pc < proglen; pc += 2) {
+    op    = prog[pc]
+    oparg = prog[pc + 1]
 
-    if (stack[stackidx] < 0 && op !~ /[\]\[]/) continue
-    if (op == ".") {
-      printf("%c", tape[tapeidx])
-      fflush(stdout)
-    } else if (op == "+") {
-      tape[tapeidx] += oparg
-      while (tape[tapeidx] > 255) tape[tapeidx] -= 256
-    } else if (op == "-") {
-      tape[tapeidx] -= oparg
-      while (tape[tapeidx] < 0) tape[tapeidx] += 256
-    } else if (op == "]") {
-      if (tape[tapeidx] > 0) i = stack[stackidx] - 2
-      delete stack[stackidx--]
-    } else if (op == "[") {
-      stack[++stackidx] = tape[tapeidx] ? i : -1
-    } else if (op == ">") {
-      tapeidx += oparg
-    } else if (op == "<") {
-      tapeidx -= oparg
-    } else if (op == "C") {
-      tape[tapeidx] = 0
-    } else if (op == "S") {
-      while (tape[tapeidx]) tapeidx += oparg
-    }
+         if (op == ".") { printf("%c", tape[cell]); fflush(stdout) }
+    else if (op == ">") { cell += oparg }
+    else if (op == "<") { cell -= oparg }
+    else if (op == "+") { tape[cell] += oparg; while (tape[cell] > 255) tape[cell] -= 256 }
+    else if (op == "-") { tape[cell] -= oparg; while (tape[cell] <   0) tape[cell] += 256 }
+    else if (op == "[") { if (!tape[cell]) pc = jump[pc] }
+    else if (op == "]") { if ( tape[cell]) pc = jump[pc] }
+    else if (op == "C") { tape[cell] = 0 }
+    else if (op == "S") { while (tape[cell]) cell += oparg }
   }
   printf("\n")
 }
@@ -120,7 +98,8 @@ function run(code, codelen,    i, op, oparg, stack, stackidx, tape, tapeidx)
 }
 
 END {
-  split("", code)
-  codelen = compile(bfstr, code)
-  run(code, codelen)
+  split("", prog)
+  split("", jump)
+  proglen = compile(bfstr, prog, jump)
+  run(prog, jump, proglen)
 }
