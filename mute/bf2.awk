@@ -6,7 +6,7 @@ BEGIN {
   if ("]" ~ /[^][]/) {
     stdout = "/dev/stdout"
   }
-  if (opts == "") opts = "CRSZ"
+  if (opts == "") opts = "CLRSZ"
 }
 
 function translate(prog, proglen, outcmd,   depth, i, op, oparg)
@@ -25,7 +25,7 @@ function translate(prog, proglen, outcmd,   depth, i, op, oparg)
     else if (op == "-") { out = out sprintf("tape[cell] -= %d\n", oparg) }
     else if (op == "[") { out = out sprintf("while (tape[cell]) {\n"); depth++ }
     else if (op == "]") { out = out sprintf("}\n") }
-    else if (op == "Z") { out = out sprintf("tape[cell] = 0\n") }
+    else if (op == "L") { out = out sprintf("tape[cell] = %d\n", oparg) }
     else if (op == "S") { out = out sprintf("while (tape[cell]) cell += %d\n", oparg) }
     else if (op == "C") { out = out sprintf("tape[cell+%d] += tape[cell]; tape[cell] = 0\n", oparg) }
   }
@@ -53,9 +53,9 @@ function compile(bfstr, prog, jump,    bflen, pc, i, op, oparg, stack, si)
     op = substr(bfstr, i, 1)
     oparg = 1
 
-    # Zero operator
+    # Zero/Load operator
     if (op == "[" && opts ~ /[Zz]/ && match(substr(bfstr, i), /^\[[-+]\]/)) {
-      prog1[pc++] = "Z"
+      prog1[pc++] = "L"
       prog1[pc++] = 0
       i += 2
       continue
@@ -96,6 +96,13 @@ function compile(bfstr, prog, jump,    bflen, pc, i, op, oparg, stack, si)
   origpc = pc
   pc = 0
   for (i = 0; i < origpc; i += 2) {
+    # Zero then add is Load
+    if (prog1[i] == "L" && opts ~ /[Ll]/ && prog1[1 + i] == 0 && prog1[2 + i] == "+") {
+      prog[pc++] = "L"
+      prog[pc++] = prog1[3 + i]
+      i += 2
+      continue
+    }
     # pre-compute jump table
     if (prog1[i] == "[")
       stack[si++] = pc
@@ -127,7 +134,7 @@ function interpret(prog, jump, proglen,    op, oparg, pc, tape, cell)
     else if (op == "-") { tape[cell] -= oparg; }
     else if (op == "[") { if (!tape[cell]) pc = jump[pc] }
     else if (op == "]") { if ( tape[cell]) pc = jump[pc] }
-    else if (op == "Z") { tape[cell] = 0 }
+    else if (op == "L") { tape[cell] = oparg }
     else if (op == "S") { while (tape[cell]) cell += oparg }
     else if (op == "C") { tape[cell+oparg] += tape[cell]; tape[cell] = 0; }
   }
