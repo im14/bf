@@ -6,38 +6,76 @@ BEGIN {
   if ("]" ~ /[^][]/) {
     stdout = "/dev/stdout"
   }
-  if (opts == "") opts = "CSR"
+  if (opts == "") opts = "CRSZ"
+}
+
+function translate(prog, proglen, outcmd,   depth, i, op, oparg)
+{
+  depth = 1
+  out = sprintf("\n\nBEGIN {\n  cell = 1\n")
+  for (i = 0; i < proglen; i += 2) {
+    op = prog[i]
+    oparg = prog[1+i]
+    if (op == "]") depth--
+    out = out sprintf("%*s", 2 * depth, "")
+         if (op == ".") { out = out sprintf("printf(\"%%c\", tape[cell]); fflush(stdout)\n") }
+    else if (op == ">") { out = out sprintf("cell += %d\n", oparg) }
+    else if (op == "<") { out = out sprintf("cell -= %d\n", oparg) }
+    else if (op == "+") { out = out sprintf("tape[cell] += %d\n", oparg) }
+    else if (op == "-") { out = out sprintf("tape[cell] -= %d\n", oparg) }
+    else if (op == "[") { out = out sprintf("while (tape[cell]) {\n"); depth++ }
+    else if (op == "]") { out = out sprintf("}\n") }
+    else if (op == "Z") { out = out sprintf("tape[cell] = 0\n") }
+    else if (op == "S") { out = out sprintf("while (tape[cell]) cell += %d\n", oparg) }
+    else if (op == "C") { out = out sprintf("tape[cell+%d] += tape[cell]; tape[cell] = 0\n", oparg) }
+  }
+  out = out sprintf("  print nl\n}\n")
+  if (outcmd)
+    printf("%s", out) | outcmd
+  else
+    printf("%s", out)
 }
 
 function compile(bfstr, prog, jump,    bflen, pc, i, op, oparg, stack, si)
 {
-  if (debug) {
-    printf("Running optimizations (%s)...", opts)
+  if (verbose) {
+    printf("Running optimizations (%s)... %d", opts, length(bfstr))
     fflush(stdout)
   }
   # strip comments
   gsub(/[^\]\[<>,.+\-]/, "", bfstr)
 
+  # first pass
   bflen = length(bfstr)
+  if (verbose) printf(" %d", bflen)
   pc = 0
   for (i = 1; i <= bflen; i++) {
     op = substr(bfstr, i, 1)
     oparg = 1
 
-    # Clear operator
-    if (op == "[" && opts ~ /[Cc]/ && match(substr(bfstr, i), /^\[[-+]\]/)) {
-      prog[pc++] = "C"
-      prog[pc++] = 0
+    # Zero operator
+    if (op == "[" && opts ~ /[Zz]/ && match(substr(bfstr, i), /^\[[-+]\]/)) {
+      prog1[pc++] = "Z"
+      prog1[pc++] = 0
       i += 2
       continue
     }
     # Scan loops
     if (op == "[" && opts ~ /[Ss]/ && match(substr(bfstr, i), /^\[[<>]+]/)) {
-      prog[pc++] = "S"
-      prog[pc++] = (substr(bfstr, 1 + i, 1) == "<" ? -1 : 1) * (RLENGTH - 2)
+      prog1[pc++] = "S"
+      prog1[pc++] = (substr(bfstr, 1 + i, 1) == "<" ? -1 : 1) * (RLENGTH - 2)
       i += RLENGTH - 1
       continue
     }
+    # Copy
+    if (op == "[" && opts ~ /[Cc]/ && match(substr(bfstr, i), /^\[->+\+<+]/)) {
+      x = (RLENGTH - 4) / 2
+      prog1[pc++] = "C"
+      prog1[pc++] = x
+      i += RLENGTH - 1
+      continue
+    }
+
     # RLE, run length encoding, or contraction
     if (opts ~ /[Rr]/) {
       while (op ~ /[<>+-]/ && i <= bflen) {
@@ -49,29 +87,31 @@ function compile(bfstr, prog, jump,    bflen, pc, i, op, oparg, stack, si)
       }
     }
 
-    # pre-compute jump table
-    if (op == "[")
-      stack[si++] = pc
-    else if (op == "]")
-      jump[jump[pc] = stack[--si]] = pc
+    prog1[pc++] = op
+    prog1[pc++] = oparg
+  }
+  if (verbose) printf(" %d", pc / 2)
 
-    prog[pc++] = op
-    prog[pc++] = oparg
+  # second pass (currently not used)
+  origpc = pc
+  pc = 0
+  for (i = 0; i < origpc; i += 2) {
+    # pre-compute jump table
+    if (prog1[i] == "[")
+      stack[si++] = pc
+    else if (prog1[i] == "]")
+      jump[jump[pc] = stack[--si]] = pc
+    prog[pc++] = prog1[i]
+    prog[pc++] = prog1[1 + i]
   }
-  if (debug) {
-    printf("done.\nbrainfuck string=%d, intermediate code ops=%d %d%%\n%04d",
-           bflen, pc / 2, 100 * pc / (2 * bflen), 0)
-    for (i = 0; i < pc; i += 2) {
-      printf(" %s%02d%s", prog[i], prog[i + 1],
-             (2 + i) % 32 ? "" : ("\n" sprintf("%04d", i)))
-    }
-    printf("\n")
-    if (debug == 2) exit
-  }
+
+  if (verbose)
+    printf(" %d. %d%% original (without comments)\n",
+           pc / 2, 100 * pc / (2 * bflen))
   return pc
 }
 
-function run(prog, jump, proglen,    op, oparg, pc, tape, cell)
+function interpret(prog, jump, proglen,    op, oparg, pc, tape, cell)
 {
   split("", tape)
   cell = 1
@@ -83,12 +123,13 @@ function run(prog, jump, proglen,    op, oparg, pc, tape, cell)
          if (op == ".") { printf("%c", tape[cell]); fflush(stdout) }
     else if (op == ">") { cell += oparg }
     else if (op == "<") { cell -= oparg }
-    else if (op == "+") { tape[cell] += oparg; while (tape[cell] > 255) tape[cell] -= 256 }
-    else if (op == "-") { tape[cell] -= oparg; while (tape[cell] <   0) tape[cell] += 256 }
+    else if (op == "+") { tape[cell] += oparg; }
+    else if (op == "-") { tape[cell] -= oparg; }
     else if (op == "[") { if (!tape[cell]) pc = jump[pc] }
     else if (op == "]") { if ( tape[cell]) pc = jump[pc] }
-    else if (op == "C") { tape[cell] = 0 }
+    else if (op == "Z") { tape[cell] = 0 }
     else if (op == "S") { while (tape[cell]) cell += oparg }
+    else if (op == "C") { tape[cell+oparg] += tape[cell]; tape[cell] = 0; }
   }
   printf("\n")
 }
@@ -101,5 +142,10 @@ END {
   split("", prog)
   split("", jump)
   proglen = compile(bfstr, prog, jump)
-  run(prog, jump, proglen)
+  if (mode ~ /p/) # print only
+    translate(prog, proglen)
+  else if (mode ~ /t/) # translate
+    translate(prog, proglen, "mawk -f -")
+  else if (mode !~ /e/) # interpret
+    interpret(prog, jump, proglen)
 }
